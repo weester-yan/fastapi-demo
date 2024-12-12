@@ -1,6 +1,11 @@
-from fastapi import FastAPI, Query, Path
+from fastapi import FastAPI, Query, Path, Form, File, UploadFile, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Annotated
+from enum import Enum
+from datetime import datetime
+
 
 
 app = FastAPI()
@@ -155,6 +160,104 @@ async def update_item(item_id: int, item: Annotated[Item, Body(embed=True)]):
     return results
 
 
+# 表单
+class FormData(BaseModel):
+    username: str
+    password: str
+
+@app.post("/login/")
+async def login(data: Annotated[FormData, Form()]):
+    return data
+
+
+# 文件上传
+@app.post("/files/")
+async def create_file(file: bytes | None = File(default=None)):
+    if not file:
+        return {"message": "No file sent"}
+    else:
+        return {"file_size": len(file)}
+
+@app.post("/uploadfile/")
+async def create_upload_file(file: UploadFile | None = None):
+    if not file:
+        return {"message": "No upload file sent"}
+    else:
+        return {"filename": file.filename}
+# 文件作为「表单数据」上传。
+# 如果把路径操作函数参数的类型声明为 bytes，FastAPI 将以 bytes 形式读取和接收文件内容。
+# 这种方式把文件的所有内容都存储在内存里，适用于小型文件。
+# 不过，很多情况下，UploadFile 更好用。
+# UploadFile 与 bytes 相比有更多优势：
+#   - 使用 spooled 文件：
+#     - 存储在内存的文件超出最大上限时，FastAPI 会把文件存入磁盘；
+#   - 这种方式更适于处理图像、视频、二进制文件等大型文件，好处是不会占用所有内存；
+#   - 可获取上传文件的元数据；
+# UploadFile 的属性如下：
+#   - filename：上传文件名字符串（str），例如， myimage.jpg；
+#   - content_type：内容类型（MIME 类型 / 媒体类型）字符串（str），例如，image/jpeg；
+#   - file： SpooledTemporaryFile（ file-like 对象）。其实就是 Python文件，可直接传递给其他预期 file-like 对象的函数或支持库。
+# UploadFile 支持以下 async 方法，（使用内部 SpooledTemporaryFile）可调用相应的文件方法。
+#   - write(data)：把 data （str 或 bytes）写入文件；
+#   - read(size)：按指定数量的字节或字符（size (int)）读取文件内容；
+#   - seek(offset)：移动至文件 offset （int）字节处的位置；
+#     - 例如，await myfile.seek(0) 移动到文件开头；
+#     - 执行 await myfile.read() 后，需再次读取已读取内容时，这种方法特别好用；
+#   - close()：关闭文件
+
+
+## 多文件上传
+@app.post("/files/")
+async def create_files(files: list[bytes] = File()):
+    return {"file_sizes": [len(file) for file in files]}
+
+@app.post("/uploadfiles/")
+async def create_upload_files(files: list[UploadFile]):
+    return {"filenames": [file.filename for file in files]}
+
+
+## 错误处理
+@app.get("/items-header/{item_id}")
+async def read_item_header(item_id: str):
+    if item_id not in items:
+        raise HTTPException(
+            status_code=404,
+            detail="Item not found",
+            headers={"X-Error": "There goes my error"},		# 支持自定义header
+        )
+    return {"item": items[item_id]}
+
+
+## JSON格式处理
+fake_db = {}
+class Item(BaseModel):
+    title: str
+    timestamp: datetime
+    description: str | None = None
+
+@app.put("/items/{id}")
+def update_item(id: str, item: Item):
+    json_compatible_item_data = jsonable_encoder(item)
+    fake_db[id] = json_compatible_item_data
+# 在这个例子中，它将Pydantic模型转换为dict，并将datetime转换为str。
+# 调用它的结果后就可以使用Python标准编码中的json.dumps()
+
+
+## CORS跨域
+origins = [
+    "http://localhost.tiangolo.com",
+    "https://localhost.tiangolo.com",
+    "http://localhost",
+    "http://localhost:8080",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 
